@@ -133,13 +133,13 @@ async def start(
     controller = await cell.controller("kukar16")
     cycle = ctx.cycle(extra={"app": "visual-studio-code"})
 
-    travel = MotionSettings(tcp_velocity_limit=250)
+    travel = MotionSettings(tcp_velocity_limit=80)
     approach = MotionSettings(tcp_velocity_limit=50)
-    sanding = MotionSettings(tcp_velocity_limit=120)
+    sanding = MotionSettings(tcp_velocity_limit=80)
 
     motion_group = controller[0]
     tcp_names = await motion_group.tcp_names()
-    tcp = tcp_names[0]
+    tcp = "1"
 
     robot_base = Pose((base_x, base_y, base_z, 0, 0, math.radians(base_yaw_deg)))
     home = ~robot_base @ Pose(HOME_FLANGE_POSE)
