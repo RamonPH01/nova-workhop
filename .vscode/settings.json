@@ -1,0 +1,44 @@
+{
+  "python.testing.pytestArgs": ["tests"],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true,
+  "python.testing.autoTestDiscoverOnSaveEnabled": true,
+  "python.envFile": "${workspaceFolder}/.env",
+  "python.languageServer": "None",
+  "python.defaultInterpreterPath": "/opt/venv/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit",
+      "source.fixAll": "explicit"
+    }
+  },
+  "notebook.codeActionsOnSave": {
+    "notebook.source.organizeImports": "explicit",
+    "notebook.source.fixAll": "explicit"
+  },
+  "notebook.formatOnSave.enabled": true,
+  "ruff.importStrategy": "fromEnvironment",
+  "window.autoDetectColorScheme": true,
+  "workbench.preferredLightColorTheme": "Light Modern",
+  "workbench.preferredDarkColorTheme": "Palenight (Mild Contrast)",
+
+  "workbench.startupEditor": "readme",
+  "workbench.activityBar.location": "default",
+  "workbench.sideBar.location": "left",
+
+  // Auto open example file on startup
+  "files.defaultLanguage": "python",
+  "workbench.editor.restoreViewState": true,
+  "workbench.panel.opensMaximized": "never",
+
+  // Exclude specific files and folders from the workspace
+  "files.exclude": {
+    "lost+found": true
+  },
+  "search.exclude": {
+    "lost+found": true
+  }
+}

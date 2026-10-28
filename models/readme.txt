@@ -1,0 +1,1 @@
+run `uv run download-models`

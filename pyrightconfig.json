@@ -1,0 +1,22 @@
+{
+  "include": ["*"],
+
+  "exclude": ["**/node_modules", "**/__pycache__"],
+
+  "defineConstant": {
+    "DEBUG": true
+  },
+
+  "reportMissingImports": "error",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownVariableType": "none",
+  "reportArgumentType": "none",
+  "reportUnusedCallResult": "none",
+  "reportUnusedCoroutine": "none",
+
+  "reportMissingTypeStubs": false,
+
+  "venvPath": "/opt",
+  "venv": "venv"
+}
