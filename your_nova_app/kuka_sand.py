@@ -11,8 +11,12 @@ The motion imitates hand sanding:
 - Lift off and return home
 
 The start (home) position is the taught "home" pose of the flange in world
-coordinates. The robot moves there collision free from wherever it is, and
-returns there at the end.
+coordinates. The robot moves there in a straight joint move from wherever it
+is, and returns there at the end. Home and the hover pose over the bar are
+fixed joint positions with the wrist not flipped (A5 > 0, A4 and A6 as close
+to 0 as possible), so the wrist cannot pick a twisted configuration. Before
+the sanding cycle runs, the program checks that A4 and A6 turn by no more
+than `max_wrist_turn_deg` and stops otherwise.
 
 Geometry (world coordinates):
 - The robot base sits at (`base_x`, `base_y`, `base_z`), turned by `base_yaw_deg`
@@ -36,7 +40,7 @@ import math
 
 import nova
 from nova import api, run_program
-from nova.actions import cartesian_ptp, collision_free, linear
+from nova.actions import joint_ptp, linear
 from nova.cell import virtual_controller
 from nova.types import MotionSettings, Pose
 from pydantic import Field
@@ -127,22 +131,50 @@ async def start(
         le=20,
         description="Number of strokes (forth, back, ...) per lane",
     ),
+    max_wrist_turn_deg: float = Field(
+        default=120,
+        gt=0,
+        le=360,
+        description="Maximum range A4 and A6 may turn during the sanding cycle in degrees",
+    ),
 ):
     """Sand both sides of a tilted flat bar."""
     cell = ctx.cell
     controller = await cell.controller("kukar16")
     cycle = ctx.cycle(extra={"app": "visual-studio-code"})
 
-    travel = MotionSettings(tcp_velocity_limit=80)
+    travel = MotionSettings(tcp_velocity_limit=250)
     approach = MotionSettings(tcp_velocity_limit=50)
-    sanding = MotionSettings(tcp_velocity_limit=80)
+    sanding = MotionSettings(tcp_velocity_limit=120)
 
     motion_group = controller[0]
     tcp_names = await motion_group.tcp_names()
-    tcp = "1"
+    tcp = tcp_names[0]
+
+    setup = await motion_group.get_setup(tcp)
+    limits = [(j.position.lower_limit, j.position.upper_limit) for j in setup.global_limits.joints]
+
+    async def joint_solutions(pose: Pose) -> list[tuple[float, ...]]:
+        # Every joint solution for the pose, including A4/A6 turned by ±360° within the joint limits
+        (solutions,) = await motion_group._inverse_kinematics([pose], tcp)
+        turns = (-2 * math.pi, 0, 2 * math.pi)
+        candidates = [
+            tuple(j + (d4 if i == 3 else d6 if i == 5 else 0) for i, j in enumerate(s))
+            for s in solutions
+            for d4 in turns
+            for d6 in turns
+        ]
+        candidates = [c for c in candidates if all(lo <= j <= hi for j, (lo, hi) in zip(c, limits))]
+        if not candidates:
+            raise ValueError(f"No joint solution for {pose}")
+        return candidates
 
     robot_base = Pose((base_x, base_y, base_z, 0, 0, math.radians(base_yaw_deg)))
-    home = ~robot_base @ Pose(HOME_FLANGE_POSE)
+    # Home with the wrist not flipped and A4/A6 as untwisted as possible
+    home_joints = min(
+        await joint_solutions(~robot_base @ Pose(HOME_FLANGE_POSE)),
+        key=lambda j: (j[4] <= 0, abs(j[3]) + abs(j[5])),
+    )
     # Surface frame in robot base coordinates: tool z points into the surface, x runs along the bar, y across it
     surface = (
         ~robot_base
@@ -172,14 +204,20 @@ async def start(
     ]
     bar_start, bar_end = -bar_length / 2, bar_length / 2
 
-    actions = [collision_free(home, settings=travel)]  # From wherever the robot is
+    # Hover over the bar in the wrist configuration closest to home
+    hover_joints = min(
+        await joint_solutions(flange_at(bar_start, lane_ys[0], pad_angle_deg) @ lift),
+        key=lambda j: (j[4] <= 0, sum(abs(a - b) for a, b in zip(j, home_joints))),
+    )
+
+    actions = [joint_ptp(home_joints, settings=travel)]
     x = bar_start
     for side, (pad_deg, ys) in enumerate(
         ((pad_angle_deg, lane_ys), (-pad_angle_deg, lane_ys[::-1]))
     ):
         contact = flange_at(x, ys[0], pad_deg)
         if side == 0:
-            actions.append(cartesian_ptp(contact @ lift, settings=travel))  # Hover over the bar
+            actions.append(joint_ptp(hover_joints, settings=travel))  # Hover over the bar
         else:
             actions.append(linear(contact @ lift, settings=approach))  # Just tilt the disc over
         actions.append(linear(contact, settings=approach))  # Touch down gently
@@ -192,13 +230,28 @@ async def start(
                 actions.append(linear(flange_at(x, y, pad_deg), settings=sanding))
         actions.append(linear(actions[-1].target @ lift, settings=approach))  # Lift off
 
-    actions.append(collision_free(home, settings=travel))
+    actions.append(joint_ptp(home_joints, settings=travel))
+
+    # Plan the sanding cycle from home, so every pass starts and ends at the same joints
+    joint_trajectory = await motion_group.plan(actions, tcp, start_joint_position=home_joints)
+
+    # Stop before moving if the wrist would twist too much
+    for axis in (3, 5):
+        turn = math.degrees(
+            max(j[axis] for j in joint_trajectory.joint_positions)
+            - min(j[axis] for j in joint_trajectory.joint_positions)
+        )
+        if turn > max_wrist_turn_deg:
+            raise RuntimeError(
+                f"A{axis + 1} would turn by {turn:.0f}° (limit {max_wrist_turn_deg:.0f}°), not moving"
+            )
 
     # Start the cycle
     await cycle.start()
 
-    # Plan the movements (shows in 3D viewer or creates an rrd file)
-    joint_trajectory = await motion_group.plan(actions, tcp)
+    # Move to home from wherever the robot is
+    to_home = [joint_ptp(home_joints, settings=travel)]
+    await motion_group.execute(await motion_group.plan(to_home, tcp), tcp, actions=to_home)
 
     print(
         f"Sanding {lanes} lanes on both sides of a {bar_length} x {bar_width} mm bar..."
