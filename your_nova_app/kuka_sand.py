@@ -8,12 +8,15 @@ The motion imitates hand sanding:
   covered with overlap
 - Lift off and return home
 
+The start (home) position is the taught "home" pose of the flange in world
+coordinates; the TCP "1" is the Sander, as on the real robot.
+
 Geometry (world coordinates, robot base on the table at the origin):
 - The center of the sanding area is at (`surface_x`, `surface_y`, `surface_z`)
 - The bar axis is turned by `bar_yaw_deg` about the world z-axis
   (0 = along the world x-axis, away from the robot; 90 = along the world y-axis)
 - The face is tilted by `tilt_deg` about the bar axis (0 = horizontal, facing up)
-- The sanding disc is the robot's "Sander" TCP and is tilted by
+- The sanding disc is the robot's TCP "1" (the Sander) and is tilted by
   `pad_angle_deg` against the surface across the bar
   (like a hand-held disc sander; this also keeps the robot wrist out of
   singularities)
@@ -24,10 +27,16 @@ import math
 
 import nova
 from nova import api, run_program
-from nova.actions import cartesian_ptp, joint_ptp, linear
+from nova.actions import cartesian_ptp, linear
 from nova.cell import virtual_controller
 from nova.types import MotionSettings, Pose
 from pydantic import Field
+
+# Taught "home" pose of the flange (TCP 2) in world: x, y, z in mm, rotation vector in rad
+HOME_FLANGE_POSE = (477.7, 12.8, 1360.4, 2.8166, -0.0555, 1.2229)
+# Offset of the sanding disc from the flange (TCP 1 on the real robot)
+SANDER_TCP_POSITION = [-147.1, 0.0, 190.7]
+SANDER_TCP_ORIENTATION = [0.0, -0.7854, 0.0]
 
 
 # Configure the robot program
@@ -99,8 +108,19 @@ async def start(
     sanding = MotionSettings(tcp_velocity_limit=120)
 
     motion_group = controller[0]
-    home_joints = await motion_group.joints()
-    tcp = "Sander"
+    tcp = "1"  # Sander, TCP 1 on the real robot
+    await motion_group.ensure_virtual_tcp(
+        api.models.RobotTcp(
+            id=tcp,
+            name=tcp,
+            position=SANDER_TCP_POSITION,
+            orientation=SANDER_TCP_ORIENTATION,
+        )
+    )
+    # The home pose is taught for the flange, express it for the Sander TCP "1"
+    home = Pose(HOME_FLANGE_POSE) @ Pose(
+        (*SANDER_TCP_POSITION, *SANDER_TCP_ORIENTATION)
+    )
 
     # Surface frame: tool z points into the surface, x runs along the bar, y across it
     surface = (
@@ -127,7 +147,7 @@ async def start(
 
     first_contact = disc_at(bar_start, lane_ys[0])
     actions = [
-        joint_ptp(home_joints, settings=travel),
+        cartesian_ptp(home, settings=travel),
         cartesian_ptp(first_contact @ lift, settings=travel),  # Hover over bar start
         linear(first_contact, settings=approach),  # Touch down gently
     ]
@@ -142,7 +162,7 @@ async def start(
     last_contact = disc_at(x, lane_ys[-1])
     actions += [
         linear(last_contact @ lift, settings=approach),  # Lift off
-        joint_ptp(home_joints, settings=travel),
+        cartesian_ptp(home, settings=travel),
     ]
 
     # Start the cycle
