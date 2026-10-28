@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from novax import Novax
 
-from your_nova_app.start_here import start
+from your_nova_app.kuka_sand import start
 
 CELL_ID = config("CELL_ID", default="cell", cast=str)
 BASE_PATH = config("BASE_PATH", default="", cast=str)

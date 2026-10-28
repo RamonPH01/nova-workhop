@@ -13,8 +13,8 @@ Geometry (world coordinates, robot base on the table at the origin):
 - The bar axis is turned by `bar_yaw_deg` about the world z-axis
   (0 = along the world x-axis, away from the robot; 90 = along the world y-axis)
 - The face is tilted by `tilt_deg` about the bar axis (0 = horizontal, facing up)
-- The sanding disc sits `tool_length` mm in front of the flange on the flange
-  axis and is tilted by `pad_angle_deg` against the surface across the bar
+- The sanding disc is the robot's "Sander" TCP and is tilted by
+  `pad_angle_deg` against the surface across the bar
   (like a hand-held disc sander; this also keeps the robot wrist out of
   singularities)
 """
@@ -48,28 +48,50 @@ from pydantic import Field
 )
 async def start(
     ctx: nova.ProgramContext,
-    count: int = Field(default=1, ge=1, le=10, description="Number of sanding passes over the bar"),
+    count: int = Field(
+        default=1, ge=1, le=10, description="Number of sanding passes over the bar"
+    ),
     bar_length: float = Field(default=456, gt=0, description="Length of the bar in mm"),
-    bar_width: float = Field(default=5.2, gt=0, description="Width of the surface to sand in mm"),
-    surface_x: float = Field(default=874, description="Distance of the bar center in front of the robot base in mm"),
-    surface_y: float = Field(default=186.7, description="Sideways offset of the bar center in mm"),
-    surface_z: float = Field(default=137.9, description="Height of the sanding surface above the robot base in mm"),
-    bar_yaw_deg: float = Field(default=0, description="Direction of the bar axis about the world z-axis in degrees"),
-    tilt_deg: float = Field(default=0, ge=-90, le=90, description="Tilt of the bar surface in degrees"),
-    sanding_pad_width: float = Field(default=125, gt=0, description="Diameter of the sanding disc in mm"),
-    tool_length: float = Field(
-        default=220, ge=0, description="Distance from flange to sanding disc surface in mm"
+    bar_width: float = Field(
+        default=5.2, gt=0, description="Width of the surface to sand in mm"
+    ),
+    surface_x: float = Field(
+        default=874,
+        description="Distance of the bar center in front of the robot base in mm",
+    ),
+    surface_y: float = Field(
+        default=186.7, description="Sideways offset of the bar center in mm"
+    ),
+    surface_z: float = Field(
+        default=137.9,
+        description="Height of the sanding surface above the robot base in mm",
+    ),
+    bar_yaw_deg: float = Field(
+        default=0,
+        description="Direction of the bar axis about the world z-axis in degrees",
+    ),
+    tilt_deg: float = Field(
+        default=0, ge=-90, le=90, description="Tilt of the bar surface in degrees"
+    ),
+    sanding_pad_width: float = Field(
+        default=125, gt=0, description="Diameter of the sanding disc in mm"
     ),
     pad_angle_deg: float = Field(
-        default=10, ge=-30, le=30, description="Tilt of the sanding disc against the surface in degrees"
+        default=10,
+        ge=-30,
+        le=30,
+        description="Tilt of the sanding disc against the surface in degrees",
     ),
     strokes_per_lane: int = Field(
-        default=2, ge=1, le=20, description="Number of strokes (forth, back, ...) per lane"
+        default=2,
+        ge=1,
+        le=20,
+        description="Number of strokes (forth, back, ...) per lane",
     ),
 ):
     """Sand the surface of a tilted flat bar."""
     cell = ctx.cell
-    controller = await cell.controller("kuka-kr16-r2010")
+    controller = await cell.controller("hansi2")
     cycle = ctx.cycle(extra={"app": "visual-studio-code"})
 
     travel = MotionSettings(tcp_velocity_limit=250)
@@ -78,8 +100,7 @@ async def start(
 
     motion_group = controller[0]
     home_joints = await motion_group.joints()
-    tcp_names = await motion_group.tcp_names()
-    tcp = tcp_names[0]
+    tcp = "Sander"
 
     # Surface frame: tool z points into the surface, x runs along the bar, y across it
     surface = (
@@ -87,11 +108,11 @@ async def start(
         @ Pose((0, 0, 0, math.pi, 0, 0))
         @ Pose((0, 0, 0, math.radians(tilt_deg), 0, 0))
     )
-    # Tilt the disc about its contact point; the robot moves the flange, so keep it tool_length behind the disc
-    disc_to_flange = Pose((0, 0, 0, math.radians(pad_angle_deg), 0, 0)) @ Pose((0, 0, -tool_length, 0, 0, 0))
+    # Tilt the disc about its contact point
+    disc_tilt = Pose((0, 0, 0, math.radians(pad_angle_deg), 0, 0))
 
-    def flange_at(x: float, y: float) -> Pose:
-        return surface @ Pose((x, y, 0, 0, 0, 0)) @ disc_to_flange
+    def disc_at(x: float, y: float) -> Pose:
+        return surface @ Pose((x, y, 0, 0, 0, 0)) @ disc_tilt
 
     lift = Pose((0, 0, -50, 0, 0, 0))  # 50 mm off the surface (against tool z)
 
@@ -104,7 +125,7 @@ async def start(
     ]
     bar_start, bar_end = -bar_length / 2, bar_length / 2
 
-    first_contact = flange_at(bar_start, lane_ys[0])
+    first_contact = disc_at(bar_start, lane_ys[0])
     actions = [
         joint_ptp(home_joints, settings=travel),
         cartesian_ptp(first_contact @ lift, settings=travel),  # Hover over bar start
@@ -113,12 +134,12 @@ async def start(
 
     x = bar_start
     for y in lane_ys:
-        actions.append(linear(flange_at(x, y), settings=approach))  # Shift sideways
+        actions.append(linear(disc_at(x, y), settings=approach))  # Shift sideways
         for _ in range(strokes_per_lane):
             x = bar_end if x == bar_start else bar_start
-            actions.append(linear(flange_at(x, y), settings=sanding))
+            actions.append(linear(disc_at(x, y), settings=sanding))
 
-    last_contact = actions[-1].target
+    last_contact = disc_at(x, lane_ys[-1])
     actions += [
         linear(last_contact @ lift, settings=approach),  # Lift off
         joint_ptp(home_joints, settings=travel),
